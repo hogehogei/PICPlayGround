@@ -1,0 +1,65 @@
+[p GLOBOPT AUTOSTATIC IEEE_DBL IEEE_FLT PIC14 PIC14E ]
+[d version 1.1 ]
+[d edition pro ]
+[d chip 16F1778 ]
+[d frameptr 6 ]
+"10 C:\Program Files\Microchip\xc8\v2.41\pic\sources\c99\common\sprcadd.c
+[v ___fladd __fladd `(d  1 e 4 0 ]
+"4 C:\Program Files\Microchip\xc8\v2.41\pic\sources\c99\common\Umul8_16.c
+[v __Umul8_16 _Umul8_16 `(ui  1 e 2 0 ]
+"11 C:\Users\hogehogei\MPLABXProjects\PIC_PlayGround.X\main.c
+[v _Init_SystemClock Init_SystemClock `(v  1 e 1 0 ]
+"19
+[v _Init_PortDirection Init_PortDirection `(v  1 e 1 0 ]
+"66
+[v _main main `(v  1 e 1 0 ]
+"1635 C:/Program Files/Microchip/MPLABX/v6.10/packs/Microchip/PIC12-16F1xxx_DFP/1.4.213/xc8\pic\include\proc\pic16f1778.h
+[v _TRISA TRISA `VEuc  1 e 1 @140 ]
+"1697
+[v _TRISB TRISB `VEuc  1 e 1 @141 ]
+"1759
+[v _TRISC TRISC `VEuc  1 e 1 @142 ]
+"2410
+[v _OSCCON OSCCON `VEuc  1 e 1 @155 ]
+"2673
+[v _LATA LATA `VEuc  1 e 1 @268 ]
+"2735
+[v _LATB LATB `VEuc  1 e 1 @269 ]
+"2797
+[v _LATC LATC `VEuc  1 e 1 @270 ]
+"3722
+[v _ANSELA ANSELA `VEuc  1 e 1 @396 ]
+"3772
+[v _ANSELB ANSELB `VEuc  1 e 1 @397 ]
+"3822
+[v _ANSELC ANSELC `VEuc  1 e 1 @398 ]
+"4909
+[v _WPUA WPUA `VEuc  1 e 1 @524 ]
+"4971
+[v _WPUB WPUB `VEuc  1 e 1 @525 ]
+"5033
+[v _WPUC WPUC `VEuc  1 e 1 @526 ]
+"6924
+[v _ODCONA ODCONA `VEuc  1 e 1 @652 ]
+"6986
+[v _ODCONB ODCONB `VEuc  1 e 1 @653 ]
+"7048
+[v _ODCONC ODCONC `VEuc  1 e 1 @654 ]
+"41905
+"41905
+[v _PLLR PLLR `VEb  1 e 0 @1254 ]
+"66 C:\Users\hogehogei\MPLABXProjects\PIC_PlayGround.X\main.c
+[v _main main `(v  1 e 1 0 ]
+{
+"75
+} 0
+"11
+[v _Init_SystemClock Init_SystemClock `(v  1 e 1 0 ]
+{
+"17
+} 0
+"19
+[v _Init_PortDirection Init_PortDirection `(v  1 e 1 0 ]
+{
+"49
+} 0
