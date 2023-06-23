@@ -4,3 +4,9 @@ BlinkLED.X/dist/
 BlinkLED.X/queuelogs/
 BlinkLED.X/report/
 BlinkLED.X/*.log*
+UART/build/
+UART/debug/
+UART/dist/
+UART/queuelogs/
+UART/report/
+UART/*.log*
