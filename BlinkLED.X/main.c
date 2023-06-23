@@ -35,7 +35,6 @@ static uint8_t g_LEDBlinkTimer   = 0;
 
 void TMR2_ISR(void);
 
-
 void Init_MainClock(void)
 {
     // Set main clock = internal clock 32MHz(8MHz -> PLLx4)
@@ -76,11 +75,6 @@ void Init_PortDirection(void)
     // ILVLB   = default
 }
 
-void Init_PPS(void)
-{
-    
-}
-
 void Init_Timer(void)
 {
     // init system timer(1ms interval timer)
@@ -88,7 +82,7 @@ void Init_Timer(void)
     T2CON    = 0x60;        // prescaler = 1:64, postscaler 1:1
     T2HLT    = 0x00;        // software Freerun mode
     TMR2     = 0;           // Reset 0
-    T2PR     = 125;         // compare value
+    T2PR     = 125 - 1;     // compare value
     // T2RST = default(not use externel reset signal)
 }
 
@@ -99,11 +93,6 @@ void Timer_Start(void)
     TMR2IE = 1;         // enable interrupt
     // Timer start
     T2CONbits.ON = 1;
-}
-
-void Init_OpAmp(void)
-{
-    
 }
 
 void EnableInterruptAtSystemWakeup()
@@ -138,7 +127,6 @@ void main(void)
 {
     Init_MainClock();
     Init_PortDirection();
-    Init_PPS();
     Init_Timer();
     
     EnableInterruptAtSystemWakeup();
