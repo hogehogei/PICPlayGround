@@ -1,11 +1,39 @@
 #include <xc.h>
 #include <stdint.h>
 
+// PIC16F1778 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1
+#pragma config FOSC = INTOSC    // Oscillator Selection Bits (INTOSC oscillator: I/O function on CLKIN pin)
+#pragma config WDTE = OFF       // Watchdog Timer Enable (WDT disabled)
+#pragma config PWRTE = OFF      // Power-up Timer Enable (PWRT disabled)
+#pragma config MCLRE = ON       // MCLR Pin Function Select (MCLR/VPP pin function is MCLR)
+#pragma config CP = OFF         // Flash Program Memory Code Protection (Program memory code protection is disabled)
+#pragma config BOREN = ON       // Brown-out Reset Enable (Brown-out Reset enabled)
+#pragma config CLKOUTEN = OFF   // Clock Out Enable (CLKOUT function is disabled. I/O or oscillator function on the CLKOUT pin)
+#pragma config IESO = OFF       // Internal/External Switchover Mode (Internal/External Switchover Mode is disabled)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enable (Fail-Safe Clock Monitor is disabled)
+
+// CONFIG2
+#pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
+#pragma config PPS1WAY = OFF    // Peripheral Pin Select one-way control (The PPSLOCK bit can be set and cleared repeatedly by software)
+#pragma config ZCD = OFF        // Zero-cross detect disable (Zero-cross detect circuit is disabled at POR)
+#pragma config PLLEN = OFF      // Phase Lock Loop enable (4x PLL is always enabled)
+#pragma config STVREN = ON      // Stack Overflow/Underflow Reset Enable (Stack Overflow or Underflow will cause a Reset)
+#pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
+#pragma config LPBOR = OFF      // Low-Power Brown Out Reset (Low-Power BOR is disabled)
+#pragma config LVP = ON         // Low-Voltage Programming Enable (Low-voltage programming enabled)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
 static uint8_t g_MainLoop1msTick = 0;
 static uint8_t g_MainLoop_F      = 0;
 static uint8_t g_LEDBlinkTimer   = 0;
 
-void TMR3_ISR(void);
+void TMR2_ISR(void);
 
 
 void Init_MainClock(void)
@@ -59,10 +87,18 @@ void Init_Timer(void)
     T2CLKCON = 0x01;        // clock source = Fosc/4
     T2CON    = 0x60;        // prescaler = 1:64, postscaler 1:1
     T2HLT    = 0x00;        // software Freerun mode
+    TMR2     = 0;           // Reset 0
+    T2PR     = 125;         // compare value
     // T2RST = default(not use externel reset signal)
-    
+}
+
+void Timer_Start(void)
+{
     // Set Timer2 interrupt enable
-    TMR2IE = 1;
+    TMR2IF = 0;         // clear interrupt flag
+    TMR2IE = 1;         // enable interrupt
+    // Timer start
+    T2CONbits.ON = 1;
 }
 
 void Init_OpAmp(void)
@@ -79,16 +115,17 @@ void EnableInterruptAtSystemWakeup()
 void __interrupt() INTERRUPT_MainHandler(void)
 {
     // interrupt handler
-    if( INTCONbits.PEIE != 1){
+    if( INTCONbits.PEIE != 1 ){
         return;
     }
     
-    if( PIE1bits.TMR2IE == 1 && PIR1bits.TMR2IF == 1){
-        TMR3_ISR();
+    if( TMR2IE == 1 && TMR2IF == 1 ){
+        TMR2_ISR();
+        TMR2IF = 0;
     }
 }
 
-void TMR3_ISR(void)
+void TMR2_ISR(void)
 {
     ++g_MainLoop1msTick;
     if( g_MainLoop1msTick >= 10 ){
@@ -105,13 +142,18 @@ void main(void)
     Init_Timer();
     
     EnableInterruptAtSystemWakeup();
-    
+    Timer_Start();
+
+
+    LATC = 0x01;
     while(1){
         if( g_MainLoop_F == 1 ){
             g_MainLoop_F = 0;
             
+            ++g_LEDBlinkTimer;
             if( g_LEDBlinkTimer >= 50 ){
-                LATA ^= 0x01;
+                LATC ^= 0x01;
+                g_LEDBlinkTimer = 0;
             }
         }
     }

@@ -1,0 +1,6 @@
+BlinkLED.X/build/
+BlinkLED.X/debug/
+BlinkLED.X/dist/
+BlinkLED.X/queuelogs/
+BlinkLED.X/report/
+BlinkLED.X/*.log*
