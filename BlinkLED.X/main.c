@@ -20,7 +20,7 @@
 #pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
 #pragma config PPS1WAY = OFF    // Peripheral Pin Select one-way control (The PPSLOCK bit can be set and cleared repeatedly by software)
 #pragma config ZCD = OFF        // Zero-cross detect disable (Zero-cross detect circuit is disabled at POR)
-#pragma config PLLEN = OFF      // Phase Lock Loop enable (4x PLL is always enabled)
+#pragma config PLLEN = OFF      // Phase Lock Loop enable (4x PLL is enabled when software sets the SPLLEN bit)
 #pragma config STVREN = ON      // Stack Overflow/Underflow Reset Enable (Stack Overflow or Underflow will cause a Reset)
 #pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
 #pragma config LPBOR = OFF      // Low-Power Brown Out Reset (Low-Power BOR is disabled)
