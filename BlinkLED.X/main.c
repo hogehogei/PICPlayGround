@@ -108,6 +108,7 @@ void __interrupt() INTERRUPT_MainHandler(void)
         return;
     }
     
+    // Timer2 interrupt
     if( TMR2IE == 1 && TMR2IF == 1 ){
         TMR2_ISR();
         TMR2IF = 0;
@@ -128,11 +129,11 @@ void main(void)
     Init_MainClock();
     Init_PortDirection();
     Init_Timer();
+
     
     EnableInterruptAtSystemWakeup();
     Timer_Start();
-
-
+    
     LATC = 0x01;
     while(1){
         if( g_MainLoop_F == 1 ){

@@ -33,7 +33,19 @@ static uint8_t g_MainLoop1msTick = 0;
 static uint8_t g_MainLoop_F      = 0;
 static uint8_t g_LEDBlinkTimer   = 0;
 
+#define UART_TX_BUFFER_SZ      ((uint8_t)64)
+#define UART_TX_BUFFER_MASK    ((uint8_t)(UART_TX_BUFFER_SZ - 1))
+static uint8_t g_UARTTxBuffer[UART_TX_BUFFER_SZ];
+static uint8_t g_UARTTxBufferBegin = 0;
+static uint8_t g_UARTTxBufferEnd = 0;
+
+static const uint8_t sk_DecToCharTable[] = {
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
+};
+
 void TMR2_ISR(void);
+int USART_IsWriteBufferFull(void);
+void USART_PrintString( const char* str );
 
 void Init_MainClock(void)
 {
@@ -55,10 +67,10 @@ void Init_PortDirection(void)
     // ILVLA   = default
     
     // Set PortB input/output direction
-    WPUB   = 0xFF;      // internal pullup 1: enable, 0: disable
+    WPUB   = 0xDF;      // internal pullup 1: enable, 0: disable
     LATB   = 0x00;      // output latch
     ODCONB = 0x00;      // output drain control 0: push-pull, 1: open-drain
-    TRISB  = 0xFF;      // port direction 0: output, 1: input
+    TRISB  = 0xDF;      // port direction 0: output, 1: input
     ANSELB = 0x00;      // 0: digital IO, 1: analog IO
     // HIDRVB  = default
     // SLRCONB = default
@@ -77,7 +89,16 @@ void Init_PortDirection(void)
 
 void Init_PPS(void)
 {
+    // Assign UART Tx/Rx port
+    // Tx = RB5
+    RB5PPS = 0b100100;
+    // Rx = not use
+    // RXPPS  = 0b001100;
     
+    // lock PPS
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xAA;
+    PPSLOCKbits.PPSLOCKED = 1;
 }
 
 void Init_Timer(void)
@@ -100,9 +121,25 @@ void Timer_Start(void)
     T2CONbits.ON = 1;
 }
 
-void Init_OpAmp(void)
+void Init_USART(void)
 {
+    // baudrate = 9600
+    // 8bit, none parity
+    // disable flow control
+    // SEND ONLY
+    BAUD1CON = 0x00;
+    SP1BRGL = 207;
+    SP1BRGH = 0;
     
+    TX1STA = 0x04;
+    // RC1STA = 0x80;       // not use receive
+}
+
+void USART_Start(void)
+{
+    RC1STAbits.SPEN = 1;
+    TX1STAbits.TXEN = 1;
+    //RC1STAbits.CREN = 1;
 }
 
 void EnableInterruptAtSystemWakeup()
@@ -133,27 +170,93 @@ void TMR2_ISR(void)
     }
 }
 
+void USART_SendByteFromBuffer(void)
+{
+    // no data in write buffer
+    if( g_UARTTxBufferBegin == g_UARTTxBufferEnd ){
+        return;
+    }
+    // Wait until TSR be empty
+    while( TRMT == 0 ) ;
+
+    TX1REG = g_UARTTxBuffer[g_UARTTxBufferBegin];
+    g_UARTTxBufferBegin = (g_UARTTxBufferBegin + 1) & UART_TX_BUFFER_MASK;
+}
+
+void USART_WriteByte( uint8_t ch )
+{
+    if( USART_IsWriteBufferFull() ){
+        return;
+    }
+
+    g_UARTTxBuffer[g_UARTTxBufferEnd] = ch;
+    g_UARTTxBufferEnd = (g_UARTTxBufferEnd + 1) & UART_TX_BUFFER_MASK;
+}
+
+int USART_IsWriteBufferFull(void)
+{
+    uint8_t next = (g_UARTTxBufferEnd + 1) & UART_TX_BUFFER_MASK;
+    if( g_UARTTxBufferBegin == next ){
+        return 1;
+    }
+
+    return 0;
+}
+
+void USART_PrintUInt16( uint16_t v, uint8_t dec )
+{
+    char c[6];
+    int8_t ptr = 5;
+    c[5] = '\0';
+
+    do {
+        --ptr;
+        c[ptr] = sk_DecToCharTable[v % dec];
+        v /= dec;
+    } while( v > 0 && ptr > 0 );
+
+    USART_PrintString( &c[ptr] );
+}
+
+void USART_PrintString( const char* str )
+{
+    while( *str != '\0' ){
+        USART_WriteByte( *str );
+        ++str;
+    }
+}
+
 void main(void) 
 {
+    uint8_t t = 0;
+
     Init_MainClock();
     Init_PortDirection();
     Init_PPS();
     Init_Timer();
-    
+    Init_USART();
+
     EnableInterruptAtSystemWakeup();
     Timer_Start();
-
+    USART_Start();
 
     LATC = 0x01;
     while(1){
         if( g_MainLoop_F == 1 ){
             g_MainLoop_F = 0;
-            
+
             ++g_LEDBlinkTimer;
             if( g_LEDBlinkTimer >= 50 ){
                 LATC ^= 0x01;
                 g_LEDBlinkTimer = 0;
+
+                USART_PrintUInt16( t, 10 );
+                ++t;
             }
+        }
+
+        while( g_MainLoop_F == 0 ){
+            USART_SendByteFromBuffer();
         }
     }
     
