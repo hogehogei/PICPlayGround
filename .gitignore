@@ -10,3 +10,9 @@ UART/dist/
 UART/queuelogs/
 UART/report/
 UART/*.log*
+AdcOpampCOG/build/
+AdcOpampCOG/debug/
+AdcOpampCOG/dist/
+AdcOpampCOG/queuelogs/
+AdcOpampCOG/report/
+AdcOpampCOG/*.log*
