@@ -32,14 +32,17 @@
 // internal osc 32Mhz
 #define _XTAL_FREQ 32000000
 
+#define FALSE       ((uint8_t)0)
+#define TRUE        ((uint8_t)1)
+
+// LED define
+#define LED_ON      ((uint8_t)1)
+#define LED_OFF     ((uint8_t)0)
+
 // ADC channel
 #define ADC_CHS_AN14    ((uint8_t)14)
 #define ADC_CHS_AN15    ((uint8_t)15)
 #define ADC_CHS_AN16    ((uint8_t)16)
-
-static uint8_t g_MainLoop1msTick = 0;
-static uint8_t g_MainLoop_F      = 0;
-static uint8_t g_LEDBlinkTimer   = 0;
 
 #define UART_TX_BUFFER_SZ      ((uint8_t)64)
 #define UART_TX_BUFFER_MASK    ((uint8_t)(UART_TX_BUFFER_SZ - 1))
@@ -47,8 +50,43 @@ static uint8_t g_UARTTxBuffer[UART_TX_BUFFER_SZ];
 static uint8_t g_UARTTxBufferBegin = 0;
 static uint8_t g_UARTTxBufferEnd = 0;
 
+#define SENSE_PANEL_VOLTAGE_OVERSAMPLE  ((uint8_t)4)
+#define CHECK_PANEL_OPEN_VOLT_CHECK_MAX ((uint8_t)8)
+#define CHECK_PANEL_OPEN_VOLT_DIFF_MV   ((uint16_t)10)
+static uint8_t g_MainLoop1msTick = 0;
+static uint8_t g_MainLoop_F      = 0;
+
+// Charge sequence
+#define PWM_WIDTH_MAX       ((uint16_t)3200)
+#define MPPT_CHARGING       ((uint8_t)0)
+#define MPPT_FULLCHARGE     ((uint8_t)1)
+static uint8_t g_MPPT_Sequence = MPPT_CHARGING;
+// Full charge timer
+static uint8_t g_MPPT_FullCharge_Init_F = FALSE;
+static uint16_t g_LED_BattFullChargeTimer = 0;
+
+static uint8_t g_MPPT_CheckVoltCnt = 0;
+static uint16_t g_MPPT_OpenVolt = 0;
+static uint16_t g_MPPT_TargetVolt = 0;
+static uint16_t g_MPPT_PWMWidth = 0;
+static uint16_t g_MPPT_BattVolt = 0;
+static uint16_t g_MPPT_BattCurr = 0;
+static uint16_t g_MPPT_BattFullChargingTimer = 0;
+
+static uint16_t g_Debug_AdTimer = 0;
+static uint16_t gAdvalueDebug = 0;
+
+#define SENSE_BATTERY_VOLTAGE_OVERSAMPLE    ((uint8_t)16)
+#define SENSE_BATTERY_CURRENT_OVERSAMPLE    ((uint8_t)4)
+
 static const uint8_t sk_DecToCharTable[] = {
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
+};
+
+static const uint16_t sk_ChgCurrLerp[] = {
+    // advalue, current[mA]
+    140, 100,
+    380, 400,
 };
 
 void TMR2_ISR(void);
@@ -75,22 +113,20 @@ void Init_PortDirection(void)
     // ILVLA   = default
     
     // Set PortB input/output direction
-    WPUB   = 0xDC;      // internal pullup 1: enable, 0: disable
+    WPUB   = 0xD8;      // internal pullup 1: enable, 0: disable
     LATB   = 0x00;      // output latch
     ODCONB = 0x00;      // output drain control 0: push-pull, 1: open-drain
-    TRISB  = 0xDC;      // port direction 0: output, 1: input
-    ANSELB = 0x03;      // 0: digital IO, 1: analog IO
+    TRISB  = 0xD8;      // port direction 0: output, 1: input
+    ANSELB = 0x00;      // 0: digital IO, 1: analog IO
     // HIDRVB  = default
     // SLRCONB = default
     // ILVLB   = default
     
     // Set PortC input/output direction
-    //WPUC   = 0x02;    // internal pullup 1: enable, 0: disable
-    WPUC   = 0x00;      // internal pullup 1: enable, 0: disable TEST
+    WPUC   = 0x03;      // internal pullup 1: enable, 0: disable
     LATC   = 0x00;      // output latch
     ODCONC = 0x00;      // output drain control 0: push-pull, 1: open-drain
-    //TRISC  = 0xFE;    // port direction 0: output, 1: input
-    TRISC  = 0xFC;      // port direction 0: output, 1: input TEST
+    TRISC  = 0xFC;      // port direction 0: output, 1: input
     ANSELC = 0xFC;      // 0: digital IO, 1: analog IO
     // HIDRVB  = default
     // SLRCONB = default
@@ -106,11 +142,8 @@ void Init_PPS(void)
     // RXPPS  = 0b001100;
     
     // Assign COG output port
-    RB0PPS = 0b000101;
-    RB1PPS = 0b000110;
-    
-    // for PWM test
-    RC1PPS = 0b011101;
+    RB2PPS = 0b000101;  // COG1A HiSide
+    RB1PPS = 0b000110;  // COG1B LoSide
     
     // lock PPS
     PPSLOCK = 0x55;
@@ -200,7 +233,7 @@ void Init_OpAmp(void)
 
 void Init_PWM(void)
 {
-    PWM5CON    = 0x10;      // output porality = LOW
+    PWM5CON    = 0x00;      // output porality = HI
     PWM5CLKCON = 0x00;      // clock control = No Prescaler, FOSC
     PWM5LDCON  = 0x00;      // Load trigger select, LD5 trigger
     PWM5OFCON  = 0x00;
@@ -225,9 +258,11 @@ void Init_PWM(void)
 
 void Init_COG(void)
 {
+#if 1
     // Half-Bridge mode, COGclock = FOSC
     COG1CON0 = 0x0C;
-    COG1CON1 = 0x00;         // output polarity, Active level is low
+    COG1CON1 = 0x00;         // output polarity, Active level below
+                             // PWM出力波形はハイサイド=HiActive, ローサイド=HiActive 実機で確認すること
     COG1RIS0 = 0x00;         // select PWM5 output
     COG1RIS1 = 0x02;         // select PWM5 output
     COG1RSIM0 = 0x00;        // no use phase delay
@@ -236,34 +271,43 @@ void Init_COG(void)
     COG1FIS1 = 0x02;         // select PWM5 output
     COG1FSIM0 = 0x00;        // no use phase delay
     COG1FSIM1 = 0x00;        // no use phase delay
-    COG1ASD0  = 0x7C;        // auto restart enable, COGA, COGB = output '1' logic when shutdown
+    COG1ASD0  = 0x68;        // auto restart enable, COGA, COGB = output '0' logic when shutdown
     COG1ASD1  = 0x00;        // no use auto shutdown function
     //COG1STR = 0x00;
     
     // Dead time setting
-    COG1DBR = 5;            // 1/32Mhz = 31.25ns per count after riging edge
-    COG1DBF = 5;            // 1/32Mhz = 31.25ns per count after falling edge
+    COG1DBR = 10;            // 1/32Mhz = 31.25ns per count after riging edge
+    COG1DBF = 10;            // 1/32Mhz = 31.25ns per count after falling edge
     //COG1BLKR = 0x00;
     //COG1BLKF = 0x00;
     //COG1PHR = 0x00;
     //COG1PHF = 0x00;
+#endif
+}
+
+void Set_ChargeLED( uint8_t on_off )
+{
+    if( on_off == LED_ON ){
+        LATBbits.LATB0 = 1; // LO active
+    }
+    else {
+        LATBbits.LATB0 = 0;
+    }
+}
+
+void Set_ChargeLED_Invert(void)
+{
+    uint8_t b = LATBbits.LATB0;
+    b ^= 0b0000001;
+    LATBbits.LATB0 = b;
 }
 
 void Start_SyncRectification(void)
 {
     PWM5LDCONbits.LDA = 1;
     PWM5CONbits.EN = 1;
+    COG1CON0bits.LD = 1;
     COG1CON0bits.EN = 1;
-}
-
-uint16_t Get_Duty(void)
-{
-    uint16_t duty = 0;
-    duty  = PWM5PRH;
-    duty <<= 8;
-    duty |= PWM5PRL;
-    
-    return duty;
 }
 
 void Set_Duty( uint16_t duty )
@@ -271,7 +315,6 @@ void Set_Duty( uint16_t duty )
     uint8_t hi = duty >> 8;
     PWM5DCH = hi;
     PWM5DCL = (uint8_t)duty;
-    
     PWM5LDCONbits.LDA = 1;
 }
 
@@ -359,6 +402,188 @@ void USART_PrintString( const char* str )
     }
 }
 
+/**
+ * @brief    Get solarpanel voltage.
+ * @return   voltage [mv] 
+ */
+uint16_t MPPT_SensePanelVoltage(void)
+{
+    int8_t i = 0;
+    uint16_t advalue = 0;
+    
+    for( i = 0; i < SENSE_PANEL_VOLTAGE_OVERSAMPLE; ++i ){
+        advalue += Get_AnalogValue( ADC_CHS_AN14 );
+    }
+    
+    // reference voltage = 3.3V(VCC), voltage divider 1:2
+    return (uint16_t)((uint32_t)advalue * 9900 / 1024 / SENSE_PANEL_VOLTAGE_OVERSAMPLE);
+}
+
+uint16_t DiffAbs( uint16_t a, uint16_t b )
+{
+    return a > b ? (a - b) : (b - a);
+}
+
+int32_t Lerp( int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x )
+{
+    return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+}
+
+void MPPT_SensePanelOpenVolt(void)
+{
+    uint16_t before_volt;
+    uint16_t open_volt;
+    uint16_t diff_volt;
+    int8_t i;
+   
+    before_volt = MPPT_SensePanelVoltage();
+    for( i = 0; i < CHECK_PANEL_OPEN_VOLT_CHECK_MAX; ++i ){
+        open_volt = MPPT_SensePanelVoltage();
+        diff_volt = DiffAbs( before_volt, open_volt );
+        if( diff_volt < CHECK_PANEL_OPEN_VOLT_DIFF_MV ){
+            break;
+        }
+    }
+    
+    g_MPPT_OpenVolt   = open_volt;
+    g_MPPT_TargetVolt = (uint16_t)((uint32_t)open_volt * 86 / 100);
+}
+
+void MPPT_SenseBatteryVoltage(void)
+{
+    int8_t i;
+    uint16_t advalue = 0;
+    
+    for( i = 0; i < SENSE_BATTERY_VOLTAGE_OVERSAMPLE; ++i ){
+        advalue += Get_AnalogValue( ADC_CHS_AN15 );
+    }
+
+    // reference voltage = 3.3V(VCC)
+    g_MPPT_BattVolt = (uint16_t)((uint32_t)advalue * 3300 / 1024 / SENSE_BATTERY_VOLTAGE_OVERSAMPLE);
+}
+
+void MPPT_SenseVoltage(void)
+{
+    ++g_MPPT_CheckVoltCnt;
+    // sense every 100ms
+    if( g_MPPT_CheckVoltCnt >= 10 ){
+        g_MPPT_CheckVoltCnt = 0;
+        
+        Set_Duty(0);
+        MPPT_SensePanelOpenVolt();
+        MPPT_SenseBatteryVoltage();
+    }
+}
+
+void MPPT_SenseBatteryCurrent(void)
+{
+    int8_t i;
+    uint16_t advalue = 0;
+    
+    for( i = 0; i < SENSE_BATTERY_CURRENT_OVERSAMPLE; ++i ){
+        advalue += Get_AnalogValue( ADC_CHS_AN16 );
+    }
+    advalue /= SENSE_BATTERY_CURRENT_OVERSAMPLE;
+    
+    // current 2V/1A, 0.1V/50mA
+    // 1650(3.3V fullscale)
+    g_MPPT_BattCurr = Lerp( sk_ChgCurrLerp[0], sk_ChgCurrLerp[1], sk_ChgCurrLerp[2], sk_ChgCurrLerp[3], advalue );
+    //t = (uint16_t)((uint32_t)advalue * 1650 / 1024 / SENSE_BATTERY_CURRENT_OVERSAMPLE);
+    //g_MPPT_BattCurr = Lerp( sk_ChgCurrLerp[0], sk_ChgCurrLerp[1], sk_ChgCurrLerp[2], sk_ChgCurrLerp[3], curr );
+}
+
+void MPPT_SetPWMWidth(void)
+{
+    uint16_t volt = MPPT_SensePanelVoltage();
+    int16_t width = (int16_t)g_MPPT_PWMWidth;
+    
+    /*
+    if( volt < 3900 ){
+        width -= 2;
+    }
+    else if( g_MPPT_BattVolt >= 1450 ){
+        width -= 2;
+    }*/
+    
+    if( g_MPPT_BattVolt >= 1450 ){
+        width -= 2;
+    }
+    else if( volt > g_MPPT_TargetVolt ){
+        width += 2;
+    }
+    else {
+        width -= 2;
+    }
+    
+    if( width < 0 ){
+        width = 0;
+    }
+    if( width > PWM_WIDTH_MAX ){
+        width = PWM_WIDTH_MAX;
+    }
+ 
+    g_MPPT_PWMWidth = (uint16_t)width;
+    Set_Duty(g_MPPT_PWMWidth);
+}
+
+void MPPT_Charging(void)
+{
+    if(( g_MPPT_BattVolt >= 1420 ) 
+     &&( g_MPPT_BattFullChargingTimer >= 6000 )){
+        g_MPPT_Sequence = MPPT_FULLCHARGE;
+        g_MPPT_FullCharge_Init_F = TRUE;
+    }
+    else {
+        g_MPPT_BattFullChargingTimer = 0;
+    }
+    
+    MPPT_SetPWMWidth();
+    
+    Set_ChargeLED(LED_ON);
+}
+
+void InitSeq_MPPT_FullCharge(void)
+{
+    g_LED_BattFullChargeTimer = 0;
+}
+
+void MPPT_FullCharge(void)
+{
+    ++g_LED_BattFullChargeTimer;
+    if( g_LED_BattFullChargeTimer >= 500 ){
+        g_LED_BattFullChargeTimer = 0;
+        Set_ChargeLED_Invert();
+    }
+}
+
+void MPPT_ChargeSequence(void)
+{
+    switch(g_MPPT_Sequence){
+        case MPPT_CHARGING:
+            MPPT_Charging();
+            break;
+        case MPPT_FULLCHARGE:
+            InitSeq_MPPT_FullCharge();
+            MPPT_FullCharge();
+            break;
+    }
+}
+
+void DebugPrint(void)
+{
+    USART_PrintString("TgtV=");
+    USART_PrintUInt16(g_MPPT_TargetVolt, 10);
+    USART_PrintString(",");
+    
+    USART_PrintString("BattV=");
+    USART_PrintUInt16(g_MPPT_BattVolt, 10);
+    USART_PrintString(",");
+    
+    USART_PrintString("BattI=");
+    USART_PrintUInt16(g_MPPT_BattCurr, 10);
+    USART_PrintString("\n");
+}
+
 void main(void) 
 {
     uint16_t advalue;
@@ -380,22 +605,19 @@ void main(void)
     
     Set_Duty(0);
 
-    LATC = 0x01;
     while(1){
         if( g_MainLoop_F == 1 ){
             g_MainLoop_F = 0;
 
-            ++g_LEDBlinkTimer;
-            if( g_LEDBlinkTimer >= 50 ){
-                LATC ^= 0x01;
-                g_LEDBlinkTimer = 0;
-
-                advalue = Get_AnalogValue( ADC_CHS_AN14 );
-                USART_PrintUInt16( advalue, 10 );
-                advalue = Get_AnalogValue( ADC_CHS_AN15 );
-                USART_PrintUInt16( advalue, 10 );
-                advalue = Get_AnalogValue( ADC_CHS_AN16 );
-                USART_PrintUInt16( advalue, 10 );
+            MPPT_SenseVoltage();
+            MPPT_SenseBatteryCurrent();
+            MPPT_ChargeSequence();
+            //MPPT_FailureProtection();
+            
+            ++g_Debug_AdTimer;
+            if( g_Debug_AdTimer >= 50 ){
+                g_Debug_AdTimer = 0;
+                DebugPrint();
             }
         }
 

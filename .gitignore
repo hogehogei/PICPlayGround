@@ -16,3 +16,9 @@ AdcOpampCOG/dist/
 AdcOpampCOG/queuelogs/
 AdcOpampCOG/report/
 AdcOpampCOG/*.log*
+NiMH_Charger/build/
+NiMH_Charger/debug/
+NiMH_Charger/dist/
+NiMH_Charger/queuelogs/
+NiMH_Charger/report/
+NiMH_Charger/*.log*
