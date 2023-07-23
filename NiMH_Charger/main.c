@@ -22,7 +22,7 @@
 #pragma config ZCD = OFF        // Zero-cross detect disable (Zero-cross detect circuit is disabled at POR)
 #pragma config PLLEN = OFF      // Phase Lock Loop enable (4x PLL is enabled when software sets the SPLLEN bit)
 #pragma config STVREN = ON      // Stack Overflow/Underflow Reset Enable (Stack Overflow or Underflow will cause a Reset)
-#pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
+#pragma config BORV = HI        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), hi trip point selected.)
 #pragma config LPBOR = OFF      // Low-Power Brown Out Reset (Low-Power BOR is disabled)
 #pragma config LVP = ON         // Low-Voltage Programming Enable (Low-voltage programming enabled)
 
@@ -57,7 +57,7 @@ static uint8_t g_MainLoop1msTick = 0;
 static uint8_t g_MainLoop_F      = 0;
 
 // Charge sequence
-#define PWM_WIDTH_MAX       ((uint16_t)3200)
+#define PWM_WIDTH_MAX       ((uint16_t)1600)
 #define MPPT_CHARGING       ((uint8_t)0)
 #define MPPT_FULLCHARGE     ((uint8_t)1)
 static uint8_t g_MPPT_Sequence = MPPT_CHARGING;
@@ -151,7 +151,7 @@ void Init_PPS(void)
     PPSLOCKbits.PPSLOCKED = 1;
 }
 
-void Init_Timer(void)
+void Init_Timer2(void)
 {
     // init system timer(1ms interval timer)
     T2CLKCON = 0x01;        // clock source = Fosc/4
@@ -162,13 +162,36 @@ void Init_Timer(void)
     // T2RST = default(not use externel reset signal)
 }
 
-void Timer_Start(void)
+void Timer2_Start(void)
 {
     // Set Timer2 interrupt enable
     TMR2IF = 0;         // clear interrupt flag
     TMR2IE = 1;         // enable interrupt
     // Timer start
     T2CONbits.ON = 1;
+}
+
+void Init_Timer4(void)
+{
+    // Half-bridge buck converter, when discontinuous-mode,
+    // for protect reverse current from battery.
+    // Force shutdown LO side FET when PWM duty is narrow.
+    // (start PWM5 hardware trigger, after timer period, COG output force shutdown.)
+    T4CLKCON = 0x01;        // clock source = Fosc/4
+    T4CON    = 0x20;        // prescaler = 1:4, postscaler 1:1
+    T4HLT    = 0x07;        // 0b00000111 free-running-period, High level reset
+    TMR4     = 0;           // Reset 0
+    T4PR     = 0;
+    T4RST    = 0b00001101;  // reset signal = PWM5 output
+}
+
+void Timer4_Start(void)
+{
+    // Set Timer4 interrupt disable
+    //TMR4IF = 0;         // clear interrupt flag
+    //TMR4IE = 1;         // enable interrupt
+    // Timer start
+    T4CONbits.ON = 1;
 }
 
 void Init_USART(void)
@@ -271,8 +294,8 @@ void Init_COG(void)
     COG1FIS1 = 0x02;         // select PWM5 output
     COG1FSIM0 = 0x00;        // no use phase delay
     COG1FSIM1 = 0x00;        // no use phase delay
-    COG1ASD0  = 0x68;        // auto restart enable, COGA, COGB = output '0' logic when shutdown
-    COG1ASD1  = 0x00;        // no use auto shutdown function
+    COG1ASD0  = 0x68;        // shutdown enable, auto restart enable, COGA, COGB = output '0' logic when shutdown
+    COG1ASD1  = 0x80;        // shutdown function = Timer4
     //COG1STR = 0x00;
     
     // Dead time setting
@@ -304,8 +327,15 @@ void Set_ChargeLED_Invert(void)
 
 void Start_SyncRectification(void)
 {
+    // 1. set auto shutdown loside FET for protect reverse current from battery.
+    Timer4_Start();
+    
+    // 2. start PWM
     PWM5LDCONbits.LDA = 1;
     PWM5CONbits.EN = 1;
+    
+    // 3. start COG
+    COG1ASD0bits.ASE = 0;
     COG1CON0bits.LD = 1;
     COG1CON0bits.EN = 1;
 }
@@ -315,6 +345,11 @@ void Set_Duty( uint16_t duty )
     uint8_t hi = duty >> 8;
     PWM5DCH = hi;
     PWM5DCL = (uint8_t)duty;
+
+    // Set LOside shutdown timer
+    // T4timer is prescaled 1:16, PWM clock is prescaled 1:1
+    // so set period value is duty/16
+    T4PR = (duty / 16) + 1;  
     PWM5LDCONbits.LDA = 1;
 }
 
@@ -505,7 +540,10 @@ void MPPT_SetPWMWidth(void)
         width -= 2;
     }*/
     
-    if( g_MPPT_BattVolt >= 1450 ){
+    if( volt < 3500 ){
+        width -= 2;
+    }
+    else if( g_MPPT_BattVolt >= 1450 ){
         width -= 2;
     }
     else if( volt > g_MPPT_TargetVolt ){
@@ -587,11 +625,16 @@ void DebugPrint(void)
 void main(void) 
 {
     uint16_t advalue;
-    
+    uint16_t pwm = 0;
+
     Init_MainClock();
+    // wait VCC is stable 
+    __delay_ms(1000);
+    
     Init_PortDirection();
     Init_PPS();
-    Init_Timer();
+    Init_Timer2();
+    Init_Timer4();
     Init_USART();
     Init_ADC();
     Init_OpAmp();
@@ -599,21 +642,31 @@ void main(void)
     Init_COG();
     
     EnableInterruptAtSystemWakeup();
-    Timer_Start();
+    Timer2_Start();
     USART_Start();
     Start_SyncRectification();
-    
+
     Set_Duty(0);
 
     while(1){
         if( g_MainLoop_F == 1 ){
             g_MainLoop_F = 0;
 
+#if 1
             MPPT_SenseVoltage();
             MPPT_SenseBatteryCurrent();
             MPPT_ChargeSequence();
             //MPPT_FailureProtection();
-            
+#else
+            if( pwm >= 3200 ){
+                pwm = 0;
+            }
+            else {
+                pwm += 2;
+            }
+            Set_Duty(pwm);
+#endif
+   
             ++g_Debug_AdTimer;
             if( g_Debug_AdTimer >= 50 ){
                 g_Debug_AdTimer = 0;
