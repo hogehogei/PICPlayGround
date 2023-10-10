@@ -60,6 +60,15 @@ static uint8_t g_MainLoop_F      = 0;
 #define PWM_WIDTH_MAX       ((uint16_t)1600)
 #define MPPT_CHARGING       ((uint8_t)0)
 #define MPPT_FULLCHARGE     ((uint8_t)1)
+
+// Charge finish voltage
+#define BATT_FULLCHG_MILLV      ((uint16_t)1420)    // fullcharge    = 1420mv
+#define BATT_FULLCHG_CV_MILLV   ((uint16_t)1450)    // fullcharge cv = 1450mv
+#define BATT_CHGFIN_CURR        ((uint16_t)50)      // chgfin current
+#define BATT_OVERVOLTAGE        ((uint16_t)1480)    // overvoltage   = 1480mv
+
+// Failure protection
+
 static uint8_t g_MPPT_Sequence = MPPT_CHARGING;
 // Full charge timer
 static uint8_t g_MPPT_FullCharge_Init_F = FALSE;
@@ -73,6 +82,7 @@ static uint16_t g_MPPT_BattVolt = 0;
 static uint16_t g_MPPT_BattCurr = 0;
 static uint16_t g_MPPT_BattFullChargingTimer = 0;
 
+static uint16_t g_BattCurrAdValue = 0;
 static uint16_t g_Debug_AdTimer = 0;
 static uint16_t gAdvalueDebug = 0;
 
@@ -321,7 +331,7 @@ void Set_ChargeLED( uint8_t on_off )
 void Set_ChargeLED_Invert(void)
 {
     uint8_t b = LATBbits.LATB0;
-    b ^= 0b0000001;
+    b ^= 0b00000001;
     LATBbits.LATB0 = b;
 }
 
@@ -478,6 +488,7 @@ void MPPT_SensePanelOpenVolt(void)
         if( diff_volt < CHECK_PANEL_OPEN_VOLT_DIFF_MV ){
             break;
         }
+        __delay_us(50);
     }
     
     g_MPPT_OpenVolt   = open_volt;
@@ -522,6 +533,7 @@ void MPPT_SenseBatteryCurrent(void)
     
     // current 2V/1A, 0.1V/50mA
     // 1650(3.3V fullscale)
+    g_BattCurrAdValue = advalue;
     g_MPPT_BattCurr = Lerp( sk_ChgCurrLerp[0], sk_ChgCurrLerp[1], sk_ChgCurrLerp[2], sk_ChgCurrLerp[3], advalue );
     //t = (uint16_t)((uint32_t)advalue * 1650 / 1024 / SENSE_BATTERY_CURRENT_OVERSAMPLE);
     //g_MPPT_BattCurr = Lerp( sk_ChgCurrLerp[0], sk_ChgCurrLerp[1], sk_ChgCurrLerp[2], sk_ChgCurrLerp[3], curr );
@@ -532,18 +544,10 @@ void MPPT_SetPWMWidth(void)
     uint16_t volt = MPPT_SensePanelVoltage();
     int16_t width = (int16_t)g_MPPT_PWMWidth;
     
-    /*
-    if( volt < 3900 ){
-        width -= 2;
-    }
-    else if( g_MPPT_BattVolt >= 1450 ){
-        width -= 2;
-    }*/
-    
     if( volt < 3500 ){
         width -= 2;
     }
-    else if( g_MPPT_BattVolt >= 1450 ){
+    else if( g_MPPT_BattVolt >= BATT_FULLCHG_CV_MILLV ){
         width -= 2;
     }
     else if( volt > g_MPPT_TargetVolt ){
@@ -566,18 +570,21 @@ void MPPT_SetPWMWidth(void)
 
 void MPPT_Charging(void)
 {
-    if(( g_MPPT_BattVolt >= 1420 ) 
-     &&( g_MPPT_BattFullChargingTimer >= 6000 )){
-        g_MPPT_Sequence = MPPT_FULLCHARGE;
-        g_MPPT_FullCharge_Init_F = TRUE;
+    MPPT_SetPWMWidth();
+    Set_ChargeLED(LED_ON);
+
+    if((g_MPPT_BattVolt >= BATT_FULLCHG_MILLV)
+     &&(g_MPPT_BattCurr < BATT_CHGFIN_CURR)){
+        ++g_MPPT_BattFullChargingTimer;
     }
     else {
         g_MPPT_BattFullChargingTimer = 0;
     }
     
-    MPPT_SetPWMWidth();
-    
-    Set_ChargeLED(LED_ON);
+    if( g_MPPT_BattFullChargingTimer >= 6000 ){
+        g_MPPT_Sequence = MPPT_FULLCHARGE;
+        g_MPPT_FullCharge_Init_F = TRUE;
+    }
 }
 
 void InitSeq_MPPT_FullCharge(void)
@@ -619,6 +626,10 @@ void DebugPrint(void)
     
     USART_PrintString("BattI=");
     USART_PrintUInt16(g_MPPT_BattCurr, 10);
+    USART_PrintString(",");
+
+    USART_PrintString("BattIAd=");
+    USART_PrintUInt16(g_BattCurrAdValue, 10);
     USART_PrintString("\n");
 }
 
@@ -652,21 +663,11 @@ void main(void)
         if( g_MainLoop_F == 1 ){
             g_MainLoop_F = 0;
 
-#if 1
-            MPPT_SenseVoltage();
             MPPT_SenseBatteryCurrent();
+            MPPT_SenseVoltage();
             MPPT_ChargeSequence();
             //MPPT_FailureProtection();
-#else
-            if( pwm >= 3200 ){
-                pwm = 0;
-            }
-            else {
-                pwm += 2;
-            }
-            Set_Duty(pwm);
-#endif
-   
+
             ++g_Debug_AdTimer;
             if( g_Debug_AdTimer >= 50 ){
                 g_Debug_AdTimer = 0;
