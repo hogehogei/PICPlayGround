@@ -492,7 +492,7 @@ void MPPT_SensePanelOpenVolt(void)
     }
     
     g_MPPT_OpenVolt   = open_volt;
-    g_MPPT_TargetVolt = (uint16_t)((uint32_t)open_volt * 86 / 100);
+    g_MPPT_TargetVolt = (uint16_t)((uint32_t)open_volt * 76 / 100);
 }
 
 void MPPT_SenseBatteryVoltage(void)
